@@ -8,20 +8,28 @@
 
 #include <twist/memory/mmap_allocation.hpp>
 
-namespace coro {
+namespace gen {
 
 using Routine = std::function<void()>;
+
+template <typename T>
+class Iterator;
 
 template <typename T>
 class Generator {
  public:
   template <typename U>
   friend void Trampoline();
+
+  template <typename U>
+  friend void Yield(U value);
+
   Generator(Routine routine);
   std::optional<T> Resume();
   static void Yield(T value);
-  Routine GetRoutine() const;
-  bool IsCompleted() const;
+  Routine& GetRoutine();
+  Iterator<T> begin();
+  Iterator<T> end();
 
  private:
   void SwitchToCaller();
@@ -30,23 +38,22 @@ class Generator {
   static const size_t kStackPages = 4;
 
  private:
-  bool is_completed_{false};
   Routine routine_;
   twist::MmapAllocation stack_;
   context::ExecutionContext routine_context_;
   context::ExecutionContext caller_context_;
   std::optional<T> result_{std::nullopt};
+  static Generator* current_generator_;
 };
 
 template <typename T>
-static Generator<T>* current_routine = nullptr;
+Generator<T>* Generator<T>::current_generator_{nullptr};
 
 template <typename T>
 static void Trampoline() {
-  current_routine<T>->GetRoutine()();
-  current_routine<T>->is_completed_ = true;
-  current_routine<T>->result_ = std::nullopt;
-  current_routine<T>->SwitchToCaller();
+  Generator<T>::current_generator_->GetRoutine()();
+  Generator<T>::current_generator_->result_ = std::nullopt;
+  Generator<T>::current_generator_->SwitchToCaller();
 }
 
 template <typename T>
@@ -58,15 +65,15 @@ Generator<T>::Generator(Routine routine)
 
 template <typename T>
 std::optional<T> Generator<T>::Resume() {
-  current_routine<T> = this;
+  Generator<T>::current_generator_ = this;
   caller_context_.SwitchTo(routine_context_);
   return std::move(result_);
 }
 
 template <typename T>
 void Generator<T>::Yield(T value) {
-  current_routine<T>->result_.emplace(std::move(value));
-  current_routine<T>->SwitchToCaller();
+  Generator<T>::current_generator_->result_.emplace(std::move(value));
+  Generator<T>::current_generator_->SwitchToCaller();
 }
 
 template <typename T>
@@ -75,12 +82,78 @@ void Generator<T>::SwitchToCaller() {
 }
 
 template <typename T>
-bool Generator<T>::IsCompleted() const {
-  return is_completed_;
+Routine& Generator<T>::GetRoutine() {
+  return routine_;
 }
 
 template <typename T>
-Routine Generator<T>::GetRoutine() const {
-  return routine_;
+static void Yield(T value) {
+  Generator<T>::current_generator_->Yield(value);
 }
-}  // namespace coro
+
+template <typename T>
+Iterator<T> Generator<T>::begin() {
+  return Iterator<T>(this);
+}
+
+template <typename T>
+Iterator<T> Generator<T>::end() {
+   return Iterator<T>();
+}
+
+template <typename T>
+class Iterator {
+ public:
+  friend Generator<T>;
+  Iterator();
+  Iterator& operator++();
+  T& operator*();
+  bool operator==(const Iterator<T>& other);
+  bool operator!=(const Iterator<T>& other);
+
+ private:
+  Iterator(Generator<T>* generator);
+
+ private:
+  Generator<T>* generator_;
+  T value_;
+};
+
+template <typename T>
+Iterator<T>::Iterator(): generator_(nullptr) {}
+
+template <typename T>
+Iterator<T>::Iterator(Generator<T>* generator)
+: generator_(generator) {
+    ++(*this);    
+}
+
+template <typename T>
+Iterator<T>& Iterator<T>::operator++() {
+  std::optional<T> value = generator_->Resume();
+  if (value.has_value()) {
+    value_ = std::move(value.value());
+  } else {
+    generator_ = nullptr;
+  }
+  return *this;
+}
+
+template <typename T>
+T& Iterator<T>::operator*() {
+  return value_;
+}
+
+template <typename T>
+bool Iterator<T>::operator==(const Iterator<T>& other) {
+  return generator_ == other.generator_;
+}
+
+template <typename T>
+bool Iterator<T>::operator!=(const Iterator<T>& other) {
+  return generator_ != other.generator_;
+}
+
+}  // namespace gen
+
+

@@ -33,21 +33,21 @@ TEST_SUITE(Generator) {
     if (node->left_) {
       TreeWalk(node->left_);
     }
-    coro::Generator<int>::Yield(node->val_);
+    gen::Yield(node->val_);
     if (node->right_) {
       TreeWalk(node->right_);
     }
   }
 
   SIMPLE_TEST(CheckYield) {
-    coro::Generator<int> coro([]() {
-        coro::Generator<int>::Yield(5); 
+    gen::Generator<int> gen([]() {
+        gen::Generator<int>::Yield(5); 
     });
 
-    auto val = coro.Resume();
+    auto val = gen.Resume();
     ASSERT_TRUE(val.has_value());
     ASSERT_EQ(val.value(), 5);
-    val = coro.Resume();
+    val = gen.Resume();
     ASSERT_FALSE(val.has_value());
   }
 
@@ -66,21 +66,15 @@ TEST_SUITE(Generator) {
       6
     );
 
-    coro::Generator<int> walker([&root]() {
+    gen::Generator<int> walker([&root]() {
       TreeWalk(root);
     });
 
     size_t node_count = 0;
     std::vector<int> result;
 
-    while (true) {
-      std::optional<int> value = walker.Resume();
-      if (value.has_value()) {
-        result.push_back(value.value());
-      }
-      if (walker.IsCompleted()) {
-        break;
-      }
+    for (int x : walker) {
+      result.push_back(x);
       ++node_count;
     }
 
@@ -91,14 +85,14 @@ TEST_SUITE(Generator) {
 
   void ListGeneration(const std::list<int>& list) {
     for (int value : list) {
-      coro::Generator<int>::Yield(value);
+      gen::Yield(value);
     }
   }
 
   SIMPLE_TEST(ListGenerator) {
     std::list<int> list = {3, 7, 5, 98, 2, 4};
     
-    coro::Generator<int> generator([&list]() {
+    gen::Generator<int> generator([&list]() {
       ListGeneration(list);
     });
 
@@ -108,8 +102,7 @@ TEST_SUITE(Generator) {
       std::optional<int> value = generator.Resume();
       if (value.has_value()) {
         result.push_back(value.value());
-      }
-      if (generator.IsCompleted()) {
+      } else {
         break;
       }
     }
